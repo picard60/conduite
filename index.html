@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Géocaching - Course Évitement</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        body {
+            background-color: #121212;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            color: #ffffff;
+            overflow: hidden;
+        }
+        #ui-header {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 10px;
+            width: 100%;
+            max-width: 400px;
+        }
+        #logo-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+            width: 50px;
+            height: 50px;
+            margin-bottom: 5px;
+        }
+        .quadrant {
+            border-radius: 4px;
+        }
+        .q-green { background-color: #028743; }
+        .q-orange { background-color: #f26522; }
+        .q-blue { background-color: #00aef0; }
+        .q-yellow { background-color: #ffcb05; }
+        #title {
+            font-size: 20px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            color: #ffffff;
+        }
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 400px;
+            aspect-ratio: 3 / 4;
+            background-color: #222;
+            border: 4px solid #333;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        #controls {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            max-width: 400px;
+            padding: 15px;
+            gap: 20px;
+        }
+        .btn {
+            flex: 1;
+            height: 70px;
+            background-color: #333;
+            border: 2px solid #555;
+            border-radius: 15px;
+            color: white;
+            font-size: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 5px 0 #111;
+            transition: transform 0.05s;
+        }
+        .btn:active {
+            transform: translateY(4px);
+            box-shadow: 0 1px 0 #111;
+            background-color: #444;
+        }
+        #end-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            text-align: center;
+            z-index: 10;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        #end-screen.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        #end-title {
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+        #end-message {
+            font-size: 18px;
+            line-height: 1.5;
+            margin-bottom: 25px;
+            white-space: pre-line;
+        }
+        #restart-btn {
+            padding: 12px 30px;
+            font-size: 18px;
+            font-weight: bold;
+            background-color: #028743;
+            border: none;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            box-shadow: 0 4px 0 #015429;
+        }
+        #restart-btn:active {
+            transform: translateY(2px);
+            box-shadow: 0 2px 0 #015429;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-header">
+        <div id="logo-container">
+            <div class="quadrant q-green"></div>
+            <div class="quadrant q-orange"></div>
+            <div class="quadrant q-blue"></div>
+            <div class="quadrant q-yellow"></div>
+        </div>
+        <div id="title">GÉOCACHING</div>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="end-screen">
+            <div id="end-title"></div>
+            <div id="end-message"></div>
+            <button id="restart-btn" onclick="resetGame()">Recommencer</button>
+        </div>
+    </div>
+
+    <div id="controls">
+        <div class="btn" id="btn-left">◀</div>
+        <div class="btn" id="btn-right">▶</div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    canvas.width = 600;
+    canvas.height = 800;
+
+    const TOTAL_CARS = 124;
+    const WIN_SCORE = 26.0; 
+    const POINTS_PER_CAR = 0.25;
+
+    const numLanes = 3;
+    const laneWidth = canvas.width / numLanes;
+
+    let player = {
+        lane: 1,
+        targetX: laneWidth * 1 + laneWidth / 2,
+        x: laneWidth * 1 + laneWidth / 2,
+        y: canvas.height - 130,
+        width: 65,
+        height: 110,
+        color: '#00aef0'
+    };
+
+    let enemies = [];
+    let roadLinesY = 0;
+    let baseSpeed = 8.5;
+    let speedIncrement = 0.15;
+    let currentSpeed = baseSpeed;
+    let carsSpawned = 0;
+    let carsPassed = 0;
+    let score = 0;
+    let gameOver = false;
+    let spawnTimer = 0;
+    let minSpawnInterval = 42;
+    let lastTime = 0;
+    let flashActive = false;
+
+    function moveLeft() {
+        if (player.lane > 0 && !gameOver) {
+            player.lane--;
+            player.targetX = laneWidth * player.lane + laneWidth / 2;
+        }
+    }
+
+    function moveRight() {
+        if (player.lane < numLanes - 1 && !gameOver) {
+            player.lane++;
+            player.targetX = laneWidth * player.lane + laneWidth / 2;
+        }
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'q' || e.key === 'Q') moveLeft();
+        if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') moveRight();
+    });
+
+    function setupButton(id, action) {
+        const btn = document.getElementById(id);
+        btn.addEventListener('touchstart', (e) => { e.preventDefault(); action(); }, { passive: false });
+        btn.addEventListener('mousedown', (e) => { e.preventDefault(); action(); });
+    }
+    setupButton('btn-left', moveLeft);
+    setupButton('btn-right', moveRight);
+
+    function spawnWave() {
+        if (carsSpawned >= TOTAL_CARS) return;
+
+        let isDouble = Math.random() < 0.55 && (TOTAL_CARS - carsSpawned) >= 2;
+        let lanesToSpawn = [];
+
+        if (isDouble) {
+            let freeLane = Math.floor(Math.random() * numLanes);
+            for (let i = 0; i < numLanes; i++) {
+                if (i !== freeLane) lanesToSpawn.push(i);
+            }
+            carsSpawned += 2;
+        } else {
+            lanesToSpawn.push(Math.floor(Math.random() * numLanes));
+            carsSpawned += 1;
+        }
+
+        const colors = ['#f26522', '#ffcb05', '#e74c3c', '#9b59b6'];
+
+        lanesToSpawn.forEach(lane => {
+            enemies.push({
+                lane: lane,
+                x: laneWidth * lane + laneWidth / 2,
+                y: -120,
+                width: 65,
+                height: 110,
+                speed: currentSpeed,
+                color: colors[Math.floor(Math.random() * colors.length)],
+                hasCollided: false
+            });
+        });
+    }
+
+    function drawCar(x, y, width, height, color, isPlayer = false) {
+        ctx.save();
+        ctx.translate(x, y);
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+        ctx.fillRect(-width/2 + 4, -height/2 + 6, width, height, 10);
+
+        ctx.fillStyle = '#111111';
+        ctx.fillRect(-width/2 - 3, -height/2 + 15, 6, 22);
+        ctx.fillRect(width/2 - 3, -height/2 + 15, 6, 22);
+        ctx.fillRect(-width/2 - 3, height/2 - 35, 6, 22);
+        ctx.fillRect(width/2 - 3, height/2 - 35, 6, 22);
+
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.roundRect(-width/2, -height/2, width, height, 12);
+        ctx.fill();
+
+        ctx.fillStyle = '#fffbc0';
+        ctx.fillRect(-width/2 + 8, -height/2 + 1, 10, 4);
+        ctx.fillRect(width/2 - 18, -height/2 + 1, 10, 4);
+
+        ctx.fillStyle = isPlayer ? '#ff3333' : '#aa2222';
+        ctx.fillRect(-width/2 + 6, height/2 - 4, 12, 4);
+        ctx.fillRect(width/2 - 18, height/2 - 4, 12, 4);
+
+        ctx.fillStyle = '#1a1a1a';
+        ctx.beginPath();
+        ctx.roundRect(-width/2 + 5, -height/2 + 28, width - 10, height - 50, 8);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.beginPath();
+        ctx.moveTo(-width/2 + 8, -height/2 + 32);
+        ctx.lineTo(width/2 - 8, -height/2 + 32);
+        ctx.lineTo(width/2 - 12, -height/2 + 45);
+        ctx.lineTo(-width/2 + 12, -height/2 + 45);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.moveTo(-width/2 + 9, height/2 - 32);
+        ctx.lineTo(width/2 - 9, height/2 - 32);
+        ctx.lineTo(width/2 - 11, height/2 - 25);
+        ctx.lineTo(-width/2 + 11, height/2 - 25);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    function checkCollision(rect1, rect2) {
+        return (
+            rect1.x - rect1.width/2 < rect2.x + rect2.width/2 &&
+            rect1.x + rect1.width/2 > rect2.x - rect2.width/2 &&
+            rect1.y - rect1.height/2 < rect2.y + rect2.height/2 &&
+            rect1.y + rect1.height/2 > rect2.y - rect2.height/2
+        );
+    }
+
+    function update(dt) {
+        if (gameOver) return;
+
+        player.x += (player.targetX - player.x) * 0.25;
+
+        roadLinesY += currentSpeed;
+        if (roadLinesY >= 80) roadLinesY = 0;
+
+        spawnTimer++;
+        if (spawnTimer > minSpawnInterval && enemies.filter(e => e.y < 160).length === 0) {
+            spawnWave();
+            spawnTimer = 0;
+        }
+
+        flashActive = false;
+
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            let enemy = enemies[i];
+            enemy.y += currentSpeed;
+
+            if (!enemy.hasCollided && checkCollision(player, enemy)) {
+                enemy.hasCollided = true;
+                flashActive = true; 
+            }
+
+            if (enemy.y > canvas.height + enemy.height/2) {
+                if (!enemy.hasCollided) {
+                    score += POINTS_PER_CAR;
+                    currentSpeed += speedIncrement;
+                }
+                carsPassed++;
+                enemies.splice(i, 1);
+            }
+        }
+
+        if (carsPassed >= TOTAL_CARS) {
+            endGame();
+        }
+    }
+
+    function draw() {
+        ctx.fillStyle = '#2c3e50';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = '#1a252f';
+        ctx.fillRect(0, 0, 15, canvas.height);
+        ctx.fillRect(canvas.width - 15, 0, 15, canvas.height);
+
+        ctx.fillStyle = '#ffffff';
+        for (let i = 1; i < numLanes; i++) {
+            let lineX = i * laneWidth;
+            for (let y = roadLinesY - 80; y < canvas.height; y += 80) {
+                ctx.fillRect(lineX - 3, y, 6, 45);
+            }
+        }
+
+        enemies.forEach(enemy => {
+            drawCar(enemy.x, enemy.y, enemy.width, enemy.height, enemy.color, false);
+        });
+
+        drawCar(player.x, player.y, player.width, player.height, player.color, true);
+
+        if (flashActive) {
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.fillRect(15, 15, 230, 85);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#444';
+        ctx.strokeRect(15, 15, 230, 85);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 20px Arial';
+        ctx.fillText(`Score: ${score.toFixed(2)} / 31`, 30, 45);
+        
+        ctx.font = '16px Arial';
+        ctx.fillStyle = '#cccccc';
+        let remaining = TOTAL_CARS - carsPassed;
+        ctx.fillText(`Véhicules restants: ${remaining}`, 30, 75);
+    }
+
+    function gameLoop(timestamp) {
+        if (!lastTime) lastTime = timestamp;
+        let dt = timestamp - lastTime;
+        lastTime = timestamp;
+
+        update(dt);
+        draw();
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    function endGame() {
+        gameOver = true;
+        const endScreen = document.getElementById('end-screen');
+        const endTitle = document.getElementById('end-title');
+        const endMessage = document.getElementById('end-message');
+
+        endScreen.classList.add('active');
+
+        if (score >= WIN_SCORE) {
+            endTitle.innerHTML = "🎉 FÉLICITATIONS !";
+            endTitle.style.color = "#028743";
+            endMessage.innerHTML = `Votre score : <b>${score.toFixed(2)} / 31</b>\n\nBravo ! vous obtenez votre permis , à rentrer dans certitude le slogan de la sécurité routière : Vivre, ensemble .`;
+        } else {
+            endTitle.innerHTML = "❌ EXAMEN ÉCHOUÉ";
+            endTitle.style.color = "#e74c3c";
+            endMessage.innerHTML = `Votre score : <b>${score.toFixed(2)} / 31</b>\nIl vous fallait au moins 26.00 points pour obtenir le permis.\n\nConcentrez-vous et réessayez !`;
+        }
+    }
+
+    function resetGame() {
+        player.lane = 1;
+        player.targetX = laneWidth * 1 + laneWidth / 2;
+        player.x = laneWidth * 1 + laneWidth / 2;
+        enemies = [];
+        score = 0;
+        carsSpawned = 0;
+        carsPassed = 0;
+        currentSpeed = baseSpeed;
+        spawnTimer = 0;
+        gameOver = false;
+        document.getElementById('end-screen').classList.remove('active');
+    }
+
+    requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
